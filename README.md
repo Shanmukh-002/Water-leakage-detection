@@ -117,7 +117,7 @@ http://127.0.0.1:5000/
 ```bash
 curl -X POST http://localhost:5001/api/ingest \
   -H "Content-Type: application/json" \
-  -H "X-API-KEY: WATER_LEAK_API_KEY_123" \
+  -H "X-API-KEY: <provide your API key>" \
   -d '{"node_id":"node1","flow_lpm":300,"pressure_kpa":205}'
 ```
 
