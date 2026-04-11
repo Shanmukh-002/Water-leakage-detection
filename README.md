@@ -105,7 +105,6 @@ http://127.0.0.1:5000/
 | Endpoint          | Method | Description           |
 | ----------------- | ------ | --------------------- |
 | `/health`         | GET    | Service status        |
-| `/`               | GET    | Dashboard UI          |
 | `/api/ingest`     | POST   | Submit flow data      |
 | `/api/status`     | GET    | Current system status |
 | `/api/events`     | GET    | Leak history          |
