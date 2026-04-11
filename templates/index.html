@@ -1,0 +1,286 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Water Leakage Detection</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 18px; background: #fafafa; }
+    h2 { margin: 0 0 8px; }
+    .sub { color:#666; margin-bottom: 14px; }
+    .pill { display:inline-block; padding: 6px 10px; border-radius: 999px; font-weight: 700; font-size: 12px; }
+    .pill.ok { background:#e7fff2; color:#067a44; }
+    .pill.warn { background:#fff4e5; color:#a15c00; }
+    .pill.crit { background:#ffe9e9; color:#b00020; }
+    .pill.unk { background:#eee; color:#333; }
+
+    .grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 12px; margin: 12px 0 18px; }
+    .card { background:#fff; border:1px solid #e6e6e6; border-radius: 14px; padding: 12px 12px; box-shadow: 0 1px 2px rgba(0,0,0,0.04); }
+    .card h3 { margin: 0 0 6px; font-size: 14px; }
+    .kv { display:flex; justify-content: space-between; padding: 4px 0; border-bottom: 1px dashed #eee; }
+    .kv:last-child { border-bottom: none; }
+    .muted { color:#666; font-size: 12px; }
+
+    table { width: 100%; border-collapse: collapse; background:#fff; border:1px solid #e6e6e6; border-radius: 14px; overflow:hidden; }
+    th, td { text-align:left; padding: 10px; border-bottom:1px solid #eee; font-size: 13px; }
+    th { background:#f6f6f6; font-weight:700; }
+    tr:last-child td { border-bottom:none; }
+
+    .section-ok { color:#067a44; font-weight:700; }
+    .section-leak { color:#b00020; font-weight:800; }
+    .section-unknown { color:#333; font-weight:700; }
+
+    .charts { display:grid; grid-template-columns: 1fr; gap: 14px; margin-top: 18px; }
+    canvas { background:#fff; border:1px solid #e6e6e6; border-radius: 14px; padding: 10px; }
+  </style>
+</head>
+<body>
+  <h2>Underground Water Leakage Detection Dashboard</h2>
+  <div class="sub" id="metaLine">Loading system info…</div>
+
+  <div class="card" style="margin-bottom:12px;">
+    <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap;">
+      <div>
+        <div class="muted">Overall Status</div>
+        <div style="font-size:18px; font-weight:800;" id="overallStatus">—</div>
+      </div>
+      <div>
+        <div class="muted">Leak Threshold</div>
+        <div style="font-size:18px; font-weight:800;" id="thresholdDisplay">—</div>
+      </div>
+      <div>
+        <div class="muted">Data Fresh Window</div>
+        <div style="font-size:18px; font-weight:800;" id="freshWindowDisplay">—</div>
+      </div>
+      <div id="overallPill"></div>
+    </div>
+  </div>
+
+  <h3>Latest Node Readings</h3>
+  <div class="grid" id="nodeCards"></div>
+
+  <h3>Leak Status by Pipeline Section</h3>
+  <table>
+    <thead>
+      <tr>
+        <th>Section</th>
+        <th>Status</th>
+        <th>Δ Flow (L/min)</th>
+        <th>Message</th>
+        <th>Last Updated</th>
+      </tr>
+    </thead>
+    <tbody id="sectionsTable"></tbody>
+  </table>
+
+  <h3 style="margin-top:16px;">Recent Leak Events (History)</h3>
+  <table>
+    <thead>
+      <tr>
+        <th>Time</th>
+        <th>Section</th>
+        <th>Severity</th>
+        <th>Δ Flow</th>
+        <th>Message</th>
+      </tr>
+    </thead>
+    <tbody id="eventsTable"></tbody>
+  </table>
+
+  <div class="charts">
+    <div>
+      <h3 style="margin:16px 0 8px;">Flow Rate vs Time</h3>
+      <canvas id="flowChart"></canvas>
+    </div>
+
+    <div>
+      <h3 style="margin:16px 0 8px;">Leak Magnitude per Section</h3>
+      <canvas id="leakChart"></canvas>
+    </div>
+  </div>
+
+<script>
+  let flowChartInstance = null;
+  let leakChartInstance = null;
+
+  function pillForOverall(status) {
+    const s = (status || "").toUpperCase();
+    if (s.includes("LEAK")) return `<span class="pill crit">LEAK</span>`;
+    if (s.includes("MISSING")) return `<span class="pill warn">DATA MISSING</span>`;
+    return `<span class="pill ok">NORMAL</span>`;
+  }
+
+  function pillForSection(status, severity) {
+    if (status === "leak") return `<span class="pill ${severity === "CRITICAL" ? "crit" : "warn"}">${severity}</span>`;
+    if (status === "unknown") return `<span class="pill unk">UNKNOWN</span>`;
+    return `<span class="pill ok">OK</span>`;
+  }
+
+  function fmt(val, digits=2) {
+    if (val === null || val === undefined) return "—";
+    if (typeof val === "number") return val.toFixed(digits);
+    return String(val);
+  }
+
+  function fmtTime(iso) {
+    if (!iso) return "—";
+    try { return new Date(iso).toLocaleString(); } catch { return iso; }
+  }
+
+  async function fetchJSON(url) {
+    const r = await fetch(url);
+    if (!r.ok) throw new Error(`${url} failed: ${r.status}`);
+    return await r.json();
+  }
+
+  function renderStatus(status) {
+    document.getElementById("overallStatus").textContent = status.overall_status || "—";
+    document.getElementById("thresholdDisplay").textContent = `${status.threshold_lpm} L/min`;
+    document.getElementById("freshWindowDisplay").textContent = `${status.fresh_seconds} sec`;
+    document.getElementById("overallPill").innerHTML = pillForOverall(status.overall_status);
+    document.getElementById("metaLine").textContent =
+      `Shows latest flow/pressure readings per node, compares consecutive nodes, and flags leak when Δ ≥ threshold. Auto-refresh every 5 seconds.`;
+  }
+
+  function renderNodeCards(status) {
+    const container = document.getElementById("nodeCards");
+    container.innerHTML = "";
+
+    status.nodes.forEach(n => {
+      const pill = n.fresh ? `<span class="pill ok">FRESH</span>` : `<span class="pill warn">STALE</span>`;
+      const html = `
+        <div class="card">
+          <h3>${n.name} <span class="muted">(${n.node_id}, ${n.km} km)</span></h3>
+          <div class="kv"><div class="muted">Flow</div><div><b>${fmt(n.flow_lpm)} L/min</b></div></div>
+          <div class="kv"><div class="muted">Pressure</div><div><b>${fmt(n.pressure_kpa, 1)} kPa</b></div></div>
+          <div class="kv"><div class="muted">Updated</div><div>${fmtTime(n.ts)}</div></div>
+          <div style="margin-top:8px;">${pill}</div>
+        </div>
+      `;
+      container.insertAdjacentHTML("beforeend", html);
+    });
+  }
+
+  function renderSectionsTable(status) {
+    const tbody = document.getElementById("sectionsTable");
+    tbody.innerHTML = "";
+
+    status.sections.forEach(s => {
+      let cls = "section-ok";
+      if (s.status === "leak") cls = "section-leak";
+      if (s.status === "unknown") cls = "section-unknown";
+
+      const delta = (s.delta_lpm === null || s.delta_lpm === undefined) ? "—" : `${fmt(s.delta_lpm)}`
+      const row = `
+        <tr>
+          <td><b>${s.section}</b></td>
+          <td class="${cls}">${s.status.toUpperCase()} ${pillForSection(s.status, s.severity)}</td>
+          <td>${delta}</td>
+          <td>${s.message}</td>
+          <td>${fmtTime(s.ts)}</td>
+        </tr>
+      `;
+      tbody.insertAdjacentHTML("beforeend", row);
+    });
+  }
+
+  function renderEventsTable(events) {
+    const tbody = document.getElementById("eventsTable");
+    tbody.innerHTML = "";
+
+    if (!events.length) {
+      tbody.innerHTML = `<tr><td colspan="5" class="muted">No leak events logged yet.</td></tr>`;
+      return;
+    }
+
+    events.forEach(e => {
+      const sevPill = e.severity === "CRITICAL"
+        ? `<span class="pill crit">CRITICAL</span>`
+        : `<span class="pill warn">WARNING</span>`;
+
+      const row = `
+        <tr>
+          <td>${fmtTime(e.ts)}</td>
+          <td><b>${e.section}</b></td>
+          <td>${sevPill}</td>
+          <td>${fmt(e.delta_lpm)} L/min</td>
+          <td>${e.message}</td>
+        </tr>
+      `;
+      tbody.insertAdjacentHTML("beforeend", row);
+    });
+  }
+
+  function upsertFlowChart(chartData) {
+    const nodeKeys = Object.keys(chartData.flow_chart);
+    const labels = chartData.flow_chart[nodeKeys[0]]?.time || [];
+
+    const datasets = nodeKeys.map(k => ({
+      label: k,
+      data: chartData.flow_chart[k].flow,
+      borderWidth: 2,
+      tension: 0.25
+    }));
+
+    const ctx = document.getElementById("flowChart");
+    if (!flowChartInstance) {
+      flowChartInstance = new Chart(ctx, {
+        type: "line",
+        data: { labels, datasets },
+        options: { responsive: true, animation: false }
+      });
+    } else {
+      flowChartInstance.data.labels = labels;
+      flowChartInstance.data.datasets = datasets;
+      flowChartInstance.update();
+    }
+  }
+
+  function upsertLeakChart(chartData) {
+    const labels = chartData.leak_chart.map(x => x.section);
+    const deltas = chartData.leak_chart.map(x => x.delta_lpm);
+
+    const ctx = document.getElementById("leakChart");
+    if (!leakChartInstance) {
+      leakChartInstance = new Chart(ctx, {
+        type: "bar",
+        data: {
+          labels,
+          datasets: [{ label: "Δ Flow (L/min)", data: deltas }]
+        },
+        options: { responsive: true, animation: false }
+      });
+    } else {
+      leakChartInstance.data.labels = labels;
+      leakChartInstance.data.datasets[0].data = deltas;
+      leakChartInstance.update();
+    }
+  }
+
+  async function refreshAll() {
+    try {
+      const [status, events, chartData] = await Promise.all([
+        fetchJSON("/api/status"),
+        fetchJSON("/api/events?limit=20"),
+        fetchJSON("/api/chart-data"),
+      ]);
+
+      renderStatus(status);
+      renderNodeCards(status);
+      renderSectionsTable(status);
+      renderEventsTable(events);
+      upsertFlowChart(chartData);
+      upsertLeakChart(chartData);
+
+    } catch (e) {
+      console.error(e);
+    }
+  }
+
+  refreshAll();
+  setInterval(refreshAll, 5000);
+</script>
+
+</body>
+</html>

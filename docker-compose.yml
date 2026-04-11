@@ -1,0 +1,23 @@
+version: "3.9"
+
+services:
+  web:
+    build: .
+    container_name: water-leak-web
+    ports:
+      - "5001:5000"
+    volumes:
+      - .:/app
+      - leak_data:/app/data
+    restart: unless-stopped
+
+  simulator:
+    build: .
+    container_name: water-leak-simulator
+    command: python simulator.py
+    depends_on:
+      - web
+    restart: unless-stopped
+
+volumes:
+  leak_data:
