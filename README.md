@@ -1,15 +1,15 @@
 
 # 💧 Water Leak Detection System
 
-A real-time water leak detection system built using **Flask**, **SQLite**, and **Docker**, designed to monitor pipeline flow data and automatically identify potential leaks between nodes.
+A near real-time water leak detection system built using **Flask**, **SQLite**, and **Docker**, designed to monitor pipeline flow data and automatically identify potential leaks between nodes.
 
-This project simulates real-world pipeline monitoring by analyzing flow rate differences across multiple nodes and visualizing results through a live dashboard.
+This project simulates real world pipeline monitoring by analyzing flow rate differences across multiple nodes and visualizing results through a live dashboard.
 
 ---
 
 ## 🚀 Features
 
-* 📡 Real-time data ingestion via REST API
+* 📡 data ingestion via REST API
 * 📊 Flow comparison between pipeline nodes
 * 🚨 Automatic leak detection using threshold logic
 * ⚠️ Severity classification (`WARNING`, `CRITICAL`)
